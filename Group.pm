@@ -1,42 +1,71 @@
 package RTF::Group;
 
-require 5.005;
+require 5.005_62;
+
+use Exporter;
+
+our $VERSION = '1.02';
+
+our @ISA = qw(Exporter);
+our @EXPORT = qw();
+our @EXPORT_OK = qw();
+
+use strict;
+use warnings; # ::register;
 
 use Carp;
 
-use strict;
-use vars qw($VERSION);
-
-$VERSION = '0.23';
-
-sub new
+sub new                                # Creates a new RTF::Group
 {
     my $this = shift;
     my $class = ref($this) || $this;
     my $self = {};
     bless $self, $class;
-    $self->initialize();
-    $self->import(@_);
+    $self->_initialize();
+    $self->_set_properties(@_);
     return $self;
 }
 
-# --- default user-settable properties
+sub _create_method                     # Create methods as needed
+  {
+    my $method  = shift;
+    my $control = shift;
 
-my %PROPERTIES = ( subgroup => 1, escape => 1, wrap => 0 );
+    no strict 'refs';
 
-sub initialize
+    *$method = sub {
+      my $self = shift;
+      my $arg  = shift || '';
+      $self->append( "\\" . $control . $arg );
+    };
+  }
+
+our %DEFAULTS = (                      # Default attributes:
+    subgroup   => 1,                   # - append groups as subgroups
+    escape     => 1,                   # - escape special characters
+    wrap       => 0,                   # - wrap long lines (future use)
+);
+
+sub _name_slot                         # Used for generating slot names
+  {
+    my $property = shift;
+    return join("::", __PACKAGE__, $property);
+  }
+
+
+sub _initialize                        # Initialize...
 {
     my $self = shift;
 
-    $self->{GROUP} = [];
+    $self->{_name_slot 'GROUP'} = [ ]; # Define an empty group
 
-    foreach my $prop (keys %PROPERTIES)
+    foreach my $prop (keys %DEFAULTS)  # Set default properties
     {
-        $self->{$prop} = $PROPERTIES{$prop};
+        $self->{_name_slot $prop} = $DEFAULTS{$prop};
     }
 }
 
-sub import
+sub _set_properties
 {
     my $self = shift;
     foreach my $arg (@_)
@@ -45,14 +74,14 @@ sub import
         {
             foreach my $prop (keys %{$arg})
             {
-                if (exists($PROPERTIES{$prop}))
+                if (exists($DEFAULTS{$prop}))
                 {
-                    $self->{$prop} = ${$arg}{$prop};
+                    $self->{_name_slot $prop} = $arg->{$prop};
                 }
                 else
-                {
-                    croak "Invalid property: \`$prop\'";
-                }
+                {		 
+		  croak "Unknown property: \`$prop\'";
+		}
             }
         }
         else {
@@ -61,76 +90,112 @@ sub import
     }
 }
 
+sub import
+  {
+    my $class   = shift;
+    my $version = shift;
+    my %methods = @_;
+    foreach my $method (keys %methods)
+      {
+	if (defined($DEFAULTS{$method}))
+	  {
+	    $DEFAULTS{$method} = $methods{ $method };
+	  }
+	else
+	  {
+	    _create_method $method, $methods{ $method };
+	  }
+      }
+  }
+
 sub append
 {
     my $self = shift;
-    push @{$self->{GROUP}}, @_;
+    push @{$self->{_name_slot 'GROUP'}}, @_ ;
 }
 
-# escape unescaped brackets and 8-bit chaacters
+# Escape unescaped brackets and 8-bit chaacters
 sub _escape
 {
-    local ($_) = shift;
-    s/[!\\]?([\{\}])/\\$1/g;
-    s/([\x80-\xff])/sprintf("\\\'\%02x", ord($1))/eg;
-    return $_;
+    my ($atom) = @_;
+    $atom =~ s/[!\\]?([\{\}])/\\$1/g;
+    $atom =~ s/([\x80-\xff])/sprintf("\\\'\%02x", ord($1))/eg;
+    return $atom;
 }
 
+# De-reference objects in the list, so we can print it
 sub _list
 {
-    my $self = shift;
-    my @list = ();
+    my $self     = shift;             #
+    my @list_out = ();                # Returns a de-referenced list
+    my @list_in  = (@_) ? @_ :        # List to de-reference
+      @{$self->{_name_slot 'GROUP'}}; #
+    my $counter  = @list_in;          # No. of elements in list
 
-    my @parse = @_;
-    unless (@parse)
-    {
-        return (), unless (defined($self->{GROUP}));
-        @parse = @{$self->{GROUP}}
-    };
+    # Why do we decrement a counter rather than use something like
+    # ``while (my $atom = shift @list_in)''? Because if the value
+    # of $atom == 0, it will be treated as false even though there
+    # are more elements in the list to shift!
 
-    while (my $atom = shift @parse)
-    {
+    # We can't use "map" here since CODE references have an argument
+    while ($counter--)
+      {
+	if ($counter<0) { confess "atom count mismatch"; }
+
+        my $atom     = shift @list_in;
         my $ref_atom = ref($atom);
 
-        if ($ref_atom =~ m/^RTF::Group/)
-        {
-            if ($atom->{subgroup})
-            {
-                push @list, [ $atom->_list() ];
-            }
-            else
-            {
-                push @list, $atom->_list();
-            }
-        }
-        elsif ($ref_atom eq "ARRAY")
-        {
-            push @list, $self->_list(@{$atom});
-        }
-	elsif ($ref_atom eq "CODE")
-	{
-            my $args = shift @parse;
-            push @list, $self->_list( &{$atom}(@{$args}) );
-	}
-        elsif ($ref_atom eq "SCALAR")
-        {
-            push @list, ${$atom}, if (length(${$atom}));
-        }
-        elsif ($ref_atom eq "REF")
-        {
-	    push @list, $self->_list( ${$atom} );
-        }  
-        elsif ($ref_atom ne "")
-        {
-            croak "Cannot handle reference to $ref_atom";
-        }
-        else
-        {
-            push @list, $atom, if (length($atom));
-        }
+      REF_CASE: {
+	  if ($ref_atom eq "ARRAY")
+	    {
+	      push @list_out, $self->_list(@{$atom});
+	      last REF_CASE;
+	    }
+
+	  if ($ref_atom eq "SCALAR")
+	    {
+	      push @list_out, $$atom;
+	      last REF_CASE; 
+	    }
+
+	  if ($ref_atom=~ m/RTF::Group/)
+	    {
+	      if ($atom->subgroup)
+		{
+		  push @list_out, [ $atom->_list() ];
+		}
+	      else
+		{
+		  push @list_out, $atom->_list();
+		}
+	      last REF_CASE;
+	    }
+
+	  if ($ref_atom eq "CODE")
+	    {
+	      my $arg = shift @list_in; # next item is argument for subroutine
+	      $counter--;               # decrement counter just in case
+	      push @list_out, $self->_list( &$atom($arg) );
+	      last REF_CASE;
+	    }
+
+	   if ($ref_atom eq "REF")
+	     {
+	       push @list_out, $self->_list( $$atom );
+	       last REF_CASE;
+	     }
+
+	  if ($ref_atom ne "")
+	    {
+	      croak "Don\'t know how to handle reference to \`$ref_atom\'";
+	    }
+
+            push @list_out, $atom;
+      };
+
     }
 
-    return @list;
+    return @list_out;
 }
 
 sub _list_as_string
@@ -139,33 +204,29 @@ sub _list_as_string
 
     my ($atom, $string);
 
-    unless (@_) {
-        return undef;
-    }
+    unless (@_) { return; }
 
     $string = "\{";
 
-    foreach $atom (@_)
     {
-        my $ref_atom = ref($atom);
-
-        if ($ref_atom eq "ARRAY")
-        {
-            $string .= $self->_list_as_string(@{$atom});
-        }
-        else
-        {
-	    $atom = _escape($atom), if ($self->{escape});
-
-            if (($atom !~ m/^[\\\;\{\}]/) and ($string !~ m/[\}\{\s]$/))
-            {
-                $string .= " ";
-            }
-            $string .= $atom;
-        }
+      my $prev = "\{";
+      $string = join("",              # join elements togather, surrounded
+      ( "\{", (                       #   by curley braces;
+        map {                         # for each element in the list
+	  if (ref($_) eq "ARRAY")     #   if it's an array reference,
+	    {                         #     then add as a list-within-a-list
+	      $_ = $self->_list_as_string( @{ $_ } );
+	    }
+	  else                        # otherwise add the element
+	    {                         #
+	      $_ = _escape($_), if ($self->escape);
+	      $prev = ( ($_ !~ /^[\\\;\{\}]/) and ($prev !~ m/[\}\{\s]$/))
+		? " $_"
+		  : $_;
+	    }
+	} @_ ), "\}"
+      ) );
     }
-    $string .= "\}";
-    return $string;
 }
 
 sub is_empty
@@ -174,12 +235,33 @@ sub is_empty
     return ($self->_list() == 0);
 }
 
-sub string
+sub as_string
 {
     my $self = shift;
     return $self->_list_as_string( $self->_list() );
 }
 
+INIT
+  {
+    *string = \ &as_string;           # 'string' is alias for 'as_string'
+
+    foreach my $attr (keys %DEFAULTS)
+      {
+	no strict 'refs';
+	my $slot = _name_slot $attr;
+	*$attr = sub {
+	  my $self = shift;
+	  if (@_)
+	    {
+	      return $self->{$slot} = (shift) ? 1 : 0;
+	    }
+	  else
+	    {
+	      return $self->{$slot};
+	    }
+	};
+      }
+  }
 
 1;
 __END__
@@ -193,13 +275,14 @@ RTF::Group - Base class for manipulating Rich Text Format (RTF) groups
 This is a base class for manipulating RTF groups.  Groups are stored internally
 as lists. Lists may contain (sub)groups or atoms (raw text or control words).
 
-Unlike the behavior of groups in the original RTF::Document module (versions 0.63
-and earlier), references to arrays (lists) are I<not> treated as subgroups, but
-are dereferenced when expanded (as lists or strings).
+Unlike the behavior of groups in the original C<RTF::Document module> (versions 0.63 and earlier), references to arrays (lists) are I<not> treated as subgroups, but are dereferenced when expanded (as lists or strings).
 
 This allows more flexibility for changing control codes within a group, without
 having to know their exact location, or to use kluges like I<splice> on the
 arrays.
+
+I am in the process of writing a C<RTF::Generator> module which will supercede
+C<RTF::Document>.
 
 =head1 METHODS
 
@@ -212,25 +295,33 @@ PROPERTIES are optional, and are used to set properties for the object.
 
 By default, the C<subgroup> property is set.  This means that if the
 group is appended to another group, it will be emitted (using the C<_list>
-and C<string> methods) as a group within a group:
+and C<as_string> methods) as a group within a group:
 
     $g1 = new RTF::Group(g1);
     $g2 = new RTF::Group(g2);
     $g1->append($g2);
-    print $g1->string;         # emits '{g1{g2}}'
+    print $g1->as_string;       # emits '{g1{g2}}'
 
 If we disable the C<subgroup> property, we get the following:
 
     $g1 = new RTF::Group(g1);
     $g2 = new RTF::Group(g2, {subgroup=>0});
     $g1->append($g2);
-    print $g1->string;         # emits '{g1 g2}'
+    print $g1->as_string;       # emits '{g1 g2}'
 
 The C<escape> property enables automatic escaping of unescaped
 curly brackets when a group is emitted as a string. (This property
 is also enabled by default.)
 
 The C<wrap> property is not used in this version.
+
+Each property is also a method for getting or setting it's value. For
+example,
+
+    unless ($g2->subgroup)
+    {
+        $g2->subgroup(1);
+    }
 
 See the C<append> method for more details on how groups are handled.
 
@@ -249,25 +340,26 @@ If LIST contains a reference to a SCALAR, the value it points to will be
 emitted when the C<_list()> or C<_string> methods are called.
 
 If LIST contains a reference to CODE, the value that code returns will
-be emitted as if it were returned by C<_list()>. For insance,
+be emitted as if it were returned by C<_list()>. For instance,
 
     sub generator
     {
-        return 'g2';
+        my $arg = shift;
+        return uc($arg);
     }
 
     $g1 = new RTF::Group(g1);
-    $g1->append( \&generator, [] );
-    print $g1->string();       # emits '{g1 g2}'
+    $g1->append( \&generator, 'g2' );
 
-Note that C<\&generator> cannot have any arguments. However, the 
-next argument in the list is a reference to a list of arguments.
+    print $g1->as_string();            # emits '{g1 G2}'
 
-=head2 string
+Note that C<\&generator> must have one and only one argument, which is following item on the list. The argument is I<not> processed by C<RTF::Group>. (Versions of this module prior to 1.00 specified an array reference as the argument. This is not necessarily the case now.)
 
-    print $group->string();
+=head2 as_string
 
-Returns the group as a string that would appear in an RTF document.
+    print $group->as_string();
+
+Returns the group as a string that would appear in an RTF document. (The deprecated C<string> method is an alias for C<as_string>.)
 
 =head2 is_empty
 
@@ -289,23 +381,50 @@ intended for internal use I<(read: private method)>.)
     $output = $group->_list_as_string( LIST )
 
 Converts the output of the C<_list()> method into a string. This is a
-private method and may go away in future versions: use the C<string>
+private method and may go away in future versions: use the C<as_string>
 method instead.
 
 =head2 _escape
 
     $atom = RTF::Group::_escape( SCALAR );
 
-Does simple RTF escaping of brackets and 8-bit characters.
+Does simple RTF escaping of brackets and 8-bit characters. It is also a private method.
+
+=head1 CAVEATS
+
+=head2 Incompatabilities with Previous Versions
+
+This version is a rewrite. Some embarassingly wrongheaded code was changed.
+
+Earlier versions of C<RTF::Group> specified that code references required an
+array reference to follow as an argument. That is now not the case: while one
+and only one argument is still required, it can be anything: a scalar, a scalar
+reference, a hash reference, an array reference, etc.
+
+=head2 Circular References
+
+C<RTF::Group> cannot handle circular references. This version does not even check for them. Which means that
+
+    $g1 = new RTF::Group();
+    $g2 = new RTF::Group();
+
+    $g1->append($g2);
+    $g2->append($g1);
+
+will cause I<bad things to happen>. Do not do this.
 
 =head1 SEE ALSO
 
 Microsoft Technical Support and Application Note, "Rich Text Format (RTF)
 Specification and Sample Reader Program", Version 1.5.
 
+=head1 FUTURE ENHANCEMENTS
+
+I<Possibly> the ability to parse a stream into an C<RTF::Group> and some hooks to plug in a parser (so that the C<RTF::Parser> module will work nicely with this).
+
 =head1 AUTHOR
 
-Robert Rothenberg <wlkngowl@unix.asb.com>
+Robert Rothenberg <rrwo@cpan.org>
 
 =head1 LICENSE
 
