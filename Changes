@@ -1,0 +1,14 @@
+Revision history for Perl extension RTF::Group.
+
+1.10   10 Feb 2001
+	- descendant objects can now be added to RTF::Groups and emitted
+	- no longer an Exporter (leftover from h2xs)
+	- removed dynamic control method creation
+	- changed INIT to BEGIN block
+	- rewrote test script to use Test like a proper test script should
+
+1.00_01 5 Dec 2000
+	- major re-write of RTF::Group
+	- first release of RTF::Group that isn't (too) embarassing
+	- changes 'string' method to 'as_string'
+

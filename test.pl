@@ -1,59 +1,47 @@
+
+require 5.6.0;
+
+use Test;
+
+BEGIN { plan tests => 11, todo => [ ] }
+
 use strict;
 use Carp;
 
-use RTF::Group 1.02, ( paragraph => 'par' );
-no warnings;
+use RTF::Group 1.10;
+ok(1);
 
-my $count = 1;
+use warnings 'RTF::Group';
+ok(1);
 
-$|=0; message("Module loaded");
+my $g1 = new RTF::Group();
 
-sub message
+ok(!defined($g1->as_string));
+
+foreach (my $i=1; $i<=3; $i++)
   {
-    my $name = shift;
-    print sprintf('%3d. ', $count++),
-      ucfirst($name),
-      ( " " x ( 30-length($name) ) ),
-      ( ($|)?"failed":"ok" ),
-      "\n";
-
-    if ($!) { croak; }
+    $g1->append($i);
+    my $guess = "\{" . join(" ", (1..$i)) . "\}";
+    ok($g1->as_string eq $guess);
   }
-
-{
-  my $g1 = new RTF::Group();
-
-  $| = ($g1->as_string ne '');
-  message("empty group is blank");
-
-  unless ($|)
-    {
-      foreach (my $i=1; (($i<=5) and (!$|)); $i++)
-	{
-	  $g1->append($i);
-	  my $guess = "\{" . join(" ", (1..$i)) . "\}";
-	  $| = ($g1->as_string ne $guess);
-	  message("group with " . plural($i, "atom"));
-	}
-    }
 
 {
   my @array = qw(1 2 3);
   my $g1 = RTF::Group->new( @array );
   my $g2 = RTF::Group->new( $g1 );
-  $| = ($g2->as_string ne join("", "\{" x 2,join(" ", @array),"\}" x 2));
-  message("Subgroup");
+  ok($g2->as_string eq join("", "\{" x 2,join(" ", @array),"\}" x 2));
+
+  my $g3 = RTF::Group->new( @array, { subgroup=>0 } );
+  ok(!$g3->subgroup);
+
+  $g2->append( $g3 );
+
+  ok($g2->as_string eq join("", "\{" x 2,join(" ", @array),"\}", join(" ", @array), "\}" ));
+
 }
 
-  unless ($|)
-    {
-      $| = ($g1->as_string ne $g1->string);
-      message("string alias with as_string");
-    }
+ok($g1->as_string eq $g1->string);
 
-}
-
-unless ($|)
 {
   sub test_generator
   {
@@ -63,27 +51,10 @@ unless ($|)
 
   my $x = time();
   my $g2 = RTF::Group->new( \&test_generator, \$x );
-  $| = ($g2->as_string ne ("\{".(1+$x)."\}"));
-  message("subroutine reference");
+  ok($g2->as_string eq ("\{".(1+$x)."\}"));
   
 }
 
-unless ($|)
-{
-  my $g1 = new RTF::Group();
-  $g1->paragraph;
-  $| = ($g1->as_string ne "\{\\par\}");
-  message("RTF control method");
-}
 
-sub plural
-  {
-    my ($num, $word) = @_;
-    return join(" ", $num, $word) .
-      ( ($num != 1)
-	? ( ($word =~ m/s$/i) ? "es" : "s" )
-	: ""
-      );
-  }
+__END__
 
-exit $|;

@@ -2,20 +2,18 @@ package RTF::Group;
 
 require 5.005_62;
 
-use Exporter;
+our $VERSION = '1.10';
 
-our $VERSION = '1.02';
-
-our @ISA = qw(Exporter);
-our @EXPORT = qw();
-our @EXPORT_OK = qw();
+our @ISA = qw( );
 
 use strict;
-use warnings; # ::register;
+use warnings::register qw( RTF::Group );
 
 use Carp;
 
-sub new                                # Creates a new RTF::Group
+our %DEFAULTS;
+
+sub new
 {
     my $this = shift;
     my $class = ref($this) || $this;
@@ -26,25 +24,6 @@ sub new                                # Creates a new RTF::Group
     return $self;
 }
 
-sub _create_method                     # Create methods as needed
-  {
-    my $method  = shift;
-    my $control = shift;
-
-    no strict 'refs';
-
-    *$method = sub {
-      my $self = shift;
-      my $arg  = shift || '';
-      $self->append( "\\" . $control . $arg );
-    };
-  }
-
-our %DEFAULTS = (                      # Default attributes:
-    subgroup   => 1,                   # - append groups as subgroups
-    escape     => 1,                   # - escape special characters
-    wrap       => 0,                   # - wrap long lines (future use)
-);
 
 sub _name_slot                         # Used for generating slot names
   {
@@ -64,6 +43,7 @@ sub _initialize                        # Initialize...
         $self->{_name_slot $prop} = $DEFAULTS{$prop};
     }
 }
+
 
 sub _set_properties
 {
@@ -92,18 +72,32 @@ sub _set_properties
 
 sub import
   {
-    my $class   = shift;
-    my $version = shift;
-    my %methods = @_;
-    foreach my $method (keys %methods)
+    my $class       = shift;
+    my $version_req = shift || 0;
+
+    if ($version_req > $VERSION)
       {
-	if (defined($DEFAULTS{$method}))
+	croak "Using RTF::Group $VERSION when $version_req was requested";
+      }
+
+    
+    if (grep { ref($_) ne "HASH" } @_)
+      {
+	    croak "Method exporting is not supported.";
+      }
+
+    foreach my $attributes (@_)
+      {
+	foreach my $attr (keys %$attributes)
 	  {
-	    $DEFAULTS{$method} = $methods{ $method };
-	  }
-	else
-	  {
-	    _create_method $method, $methods{ $method };
+	    if (defined($DEFAULTS{$attr}))
+	      {
+		$DEFAULTS{$attr} = $attributes->{ $attr };
+	      }
+	    else
+	      {
+		croak "Invalid attribute: \`$attr\'";
+	      }
 	  }
       }
   }
@@ -124,7 +118,7 @@ sub _escape
 }
 
 # De-reference objects in the list, so we can print it
-sub _list
+sub _rtf_list
 {
     my $self     = shift;             #
     my @list_out = ();                # Returns a de-referenced list
@@ -148,7 +142,7 @@ sub _list
       REF_CASE: {
 	  if ($ref_atom eq "ARRAY")
 	    {
-	      push @list_out, $self->_list(@{$atom});
+	      push @list_out, $self->_rtf_list(@{$atom});
 	      last REF_CASE;
 	    }
 
@@ -162,11 +156,11 @@ sub _list
 	    {
 	      if ($atom->subgroup)
 		{
-		  push @list_out, [ $atom->_list() ];
+		  push @list_out, [ $atom->_rtf_list() ];
 		}
 	      else
 		{
-		  push @list_out, $atom->_list();
+		  push @list_out, $atom->_rtf_list();
 		}
 	      last REF_CASE;
 	    }
@@ -175,19 +169,24 @@ sub _list
 	    {
 	      my $arg = shift @list_in; # next item is argument for subroutine
 	      $counter--;               # decrement counter just in case
-	      push @list_out, $self->_list( &$atom($arg) );
+	      push @list_out, $self->_rtf_list( &$atom($arg) );
 	      last REF_CASE;
 	    }
 
 	   if ($ref_atom eq "REF")
 	     {
-	       push @list_out, $self->_list( $$atom );
+	       push @list_out, $self->_rtf_list( $$atom );
 	       last REF_CASE;
 	     }
 
+# Rather than die for unknown objects, we call the object's _rtf_list() method
+# so that descendant objects can be handled. (Use with caution: this can be a
+# bugbear if abused.)
+
 	  if ($ref_atom ne "")
 	    {
-	      croak "Don\'t know how to handle reference to \`$ref_atom\'";
+	      push @list_out, $atom->_rtf_list();
+	      last REF_CASE;
 	    }
 
             push @list_out, $atom;
@@ -232,18 +231,25 @@ sub _list_as_string
 sub is_empty
 {
     my $self = shift;
-    return ($self->_list() == 0);
+    return ($self->_rtf_list() == 0);
 }
 
 sub as_string
 {
     my $self = shift;
-    return $self->_list_as_string( $self->_list() );
+    return $self->_list_as_string( $self->_rtf_list() );
 }
 
-INIT
+BEGIN
   {
+    no strict 'refs';
     *string = \ &as_string;           # 'string' is alias for 'as_string'
+
+    %DEFAULTS = (
+      subgroup   => 1,
+      escape     => 1,
+      wrap       => 0,
+    );
 
     foreach my $attr (keys %DEFAULTS)
       {
@@ -264,6 +270,7 @@ INIT
   }
 
 1;
+
 __END__
 
 =head1 NAME
@@ -294,7 +301,7 @@ Creates a new group. If LIST is specified, it is appended to the group.
 PROPERTIES are optional, and are used to set properties for the object.
 
 By default, the C<subgroup> property is set.  This means that if the
-group is appended to another group, it will be emitted (using the C<_list>
+group is appended to another group, it will be emitted (using the C<_rtf_list>
 and C<as_string> methods) as a group within a group:
 
     $g1 = new RTF::Group(g1);
@@ -337,10 +344,10 @@ If LIST contains another RTF::Group, it will be embedded as a subgroup
 method).
 
 If LIST contains a reference to a SCALAR, the value it points to will be
-emitted when the C<_list()> or C<_string> methods are called.
+emitted when the C<_rtf_list()> or C<_string> methods are called.
 
 If LIST contains a reference to CODE, the value that code returns will
-be emitted as if it were returned by C<_list()>. For instance,
+be emitted as if it were returned by C<_rtf_list()>. For instance,
 
     sub generator
     {
@@ -368,9 +375,9 @@ Returns the group as a string that would appear in an RTF document. (The depreca
 Returns true if the group is empty, false if it contains something. Zero-length
 strings are considered nothing.
 
-=head2 _list
+=head2 _rtf_list
 
-    @RTF = $group->_list LIST;
+    @RTF = $group->_rtf_list LIST;
 
 "Parses" LIST by dereferencing scalars, arrays or subgroups. If LIST is
 not specified, parses group. (Although this may useful for parsers, it is
@@ -380,7 +387,7 @@ intended for internal use I<(read: private method)>.)
 
     $output = $group->_list_as_string( LIST )
 
-Converts the output of the C<_list()> method into a string. This is a
+Converts the output of the C<_rtf_list()> method into a string. This is a
 private method and may go away in future versions: use the C<as_string>
 method instead.
 
@@ -428,7 +435,7 @@ Robert Rothenberg <rrwo@cpan.org>
 
 =head1 LICENSE
 
-Copyright (c) 1999-2000 Robert Rothenberg. All rights reserved.
+Copyright (c) 1999-2001 Robert Rothenberg. All rights reserved.
 This program is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself.
 
