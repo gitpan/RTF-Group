@@ -1,0 +1,67 @@
+NAME
+
+    RTF::Group - Base class for manipulating Rich Text Format (RTF)
+    groups
+
+DESCRIPTION
+
+    This is a base class for manipulating RTF groups. Groups are
+    stored internally as lists. Lists may contain (sub)groups or
+    atoms (raw text or control words).
+
+    Unlike the behavior of groups in the original RTF::Document
+    module (versions 0.63 and earlier), references to arrays (lists)
+    are *not* treated as subgroups, but are dereferenced when
+    expanded (as lists or strings).
+
+    This allows more flexibility for changing control codes within a
+    group, without having to know their exact location, or to use
+    kluges like *splice* on the arrays.
+
+METHODS
+
+  new
+
+        $group = new RTF::Group LIST;
+
+    Creates a new group. If LIST is specified, it is appended to the
+    group.
+
+  append
+
+        $group->append LIST;
+
+    Appends LIST to the group. LIST may be plain text, controls,
+    other groups, or references to a SCALAR or another LIST.
+
+  list
+
+        @RTF = $group->list();
+
+    Returns the group as a list (array). Subgroups are lists within
+    the list. This is useful for parsers.
+
+  string
+
+        print $group->string();
+
+    Returns the group as a string that would appear in an RTF
+    document.
+
+  is_empty
+
+        if ($group->is_empty) { ... }
+
+    Returns true if the group is empty, false if it contains
+    something. Zero-length strings are considered nothing.
+
+AUTHOR
+
+    Robert Rothenberg <wlkngowl@unix.asb.com>
+
+LICENSE
+
+    Copyright (c) 1999 Robert Rothenberg. All rights reserved. This
+    program is free software; you can redistribute it and/or modify
+    it under the same terms as Perl itself.
+
